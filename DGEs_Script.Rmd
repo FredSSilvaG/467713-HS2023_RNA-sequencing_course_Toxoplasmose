@@ -1,0 +1,397 @@
+---
+title: "DGEs_script"
+Author: "Federico A. O. Silva Gutierrez
+output: html_document
+date: "2023-11-26"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+
+```
+
+## R Markdown
+
+#Libraries
+
+```{r Libaries}
+# Load necessary libraries
+#if (!requireNamespace("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+#BiocManager::install("Hmisc")
+
+# Install DESeq2 from Bioconductor
+#BiocManager::install("DESeq2")
+
+# Load libraries
+library(DESeq2)
+library(ggplot2)
+#if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+#BiocManager::install("EnhancedVolcano")
+library(EnhancedVolcano)
+
+#BiocManager::install(c("clusterProfiler", "org.Mm.eg.db"))
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(BiocParallel)
+
+# Install and load the 'patchwork' package if not already installed
+if (!requireNamespace("patchwork", quietly = TRUE)) {
+  install.packages("patchwork")
+}
+library(patchwork)
+library(stringr)
+
+```
+
+## Count and DESeq
+
+```{r Counts_observation}
+# Load the count matrix obtained from FeatureCounts
+count_matrix <- read.table("INPUT/counts_table_toxop.txt", header = TRUE, row.names = 1)
+
+# Remove unnecessary columns (Chr, Start, End, Strand, Length)
+count_matrix <- count_matrix[, !(colnames(count_matrix) %in% c("Chr", "Start", "End", "Strand", "Length"))]
+
+# Modify column names for clarity
+names(count_matrix) <- gsub("X.data.users.fsilvagutierrez.RNA_seq_Toxop_project.03_mapping.|_mappedReads_sorted.bam", "", names(count_matrix), perl = TRUE)
+
+# Read the sample table
+designTable <- read.table("INPUT/sampleTable.txt", header = TRUE, row.names = 1)
+
+# Match columns between count matrix and sample table
+designTable <- designTable[match(colnames(count_matrix), rownames(designTable)), ,drop = FALSE]
+
+# Create a DESeqDataSet object
+dds <- DESeqDataSetFromMatrix(countData = count_matrix,
+                              colData = designTable,
+                              design = ~ Group)
+
+# Run DESeq
+dds <- DESeq(dds)
+
+# Apply vst transformation
+dds_v <- vst(dds, blind = TRUE)
+dds_r <- rlog(dds, blind = TRUE)
+
+# Plot PCA
+
+PCA_plot <- plotPCA(dds_v, intgroup = "Group") +
+  theme_minimal() +
+  theme(legend.position = "right", panel.border = element_rect(color = "black", fill = NA),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black")) +
+  geom_point(aes(shape = Group, color = Group), size = 4, fill = "white", stroke = 1) +
+  scale_color_manual(values = c("Lung_WT_Case" = "blue", "Lung_WT_Control" = "lightblue", "Blood_WT_Case" = "darkred", "Blood_WT_Control" = "lightcoral")) +
+  scale_shape_manual(values = c("Lung_WT_Case" = 17, "Lung_WT_Control" = 17, "Blood_WT_Case" = 16, "Blood_WT_Control" = 16)) +
+  ggtitle("Quality Control in DESeq Analysis: PCA Plot")
+
+
+# Print PCA plot
+print(PCA_plot)
+ggsave("OUTPUT/Figures/PCA_plot.pdf", plot = PCA_plot, device = "pdf")
+
+```
+
+#Gene expression up and down regulation
+
+```{r up and downregulation gene expression}
+# Extract and analyze differentially expressed genes (DEGs) for blood and lung samples
+
+# Extract results for a specific contrast in blood samples
+res_Blood <- results(dds, contrast = c("Group", "Blood_WT_Case", "Blood_WT_Control"))
+
+# DEGs for Blood samples
+# Number of DEGs with adjusted p-value < 0.05
+Blood_DEG_padj <- subset(res_Blood, padj < 0.05)
+Blood_num_DEG_padj <- nrow(Blood_DEG_padj)
+
+# Number of up-regulated and down-regulated genes in blood
+upregulated_Blood <- subset(Blood_DEG_padj, log2FoldChange > 0)
+downregulated_Blood <- subset(Blood_DEG_padj, log2FoldChange < 0)
+
+num_upregulated_Blood <- nrow(upregulated_Blood)
+num_downregulated_Blood <- nrow(downregulated_Blood)
+
+# Extract results for a specific contrast in lung samples
+res_Lung <- results(dds, contrast = c("Group", "Lung_WT_Case", "Lung_WT_Control"))
+
+# DEGs for Lung samples
+# Number of DEGs with adjusted p-value < 0.05
+Lung_DEG_padj <- subset(res_Lung, padj < 0.05)
+Lung_num_DEG_padj <- nrow(Lung_DEG_padj)
+
+# Number of up-regulated and down-regulated genes in lung
+upregulated_Lung <- subset(Lung_DEG_padj, log2FoldChange > 0)
+downregulated_Lung <- subset(Lung_DEG_padj, log2FoldChange < 0)
+
+num_upregulated_Lung <- nrow(upregulated_Lung)
+num_downregulated_Lung <- nrow(downregulated_Lung)
+
+
+```
+
+# Retreving names for geneIDs
+
+```{r Retreving names for gene IDs}
+# Function to identify differentially expressed genes and save their IDs to a file
+process_DE_genes <- function(res, pvalue_cutoff, log2foldchange_cutoff, filename) {
+  highlighted_genes <- subset(res, padj < pvalue_cutoff & abs(log2FoldChange) > log2foldchange_cutoff)
+  highlighted_gene_ids <- rownames(highlighted_genes)
+  print(highlighted_gene_ids)
+  writeLines(highlighted_gene_ids, filename)
+  
+  # This file will be used in a bash script to retrieve Gene names from Ensembl
+  # You can also include the bash script execution here if possible
+  # system(paste("bash script.sh", filename))
+  
+  return(highlighted_genes)
+}
+
+# Function to load gene name mapping from a file and create a mapping between gene IDs and gene names
+load_gene_mapping <- function(file_path) {
+  gene_mapping <- read.table(file_path, header = FALSE, stringsAsFactors = FALSE)
+  gene_mapping <- subset(gene_mapping, select = -c(V1, V3))
+  colnames(gene_mapping) <- c("ID", "Gene")
+  return(setNames(gene_mapping$Gene, gene_mapping$ID))
+}
+
+# Function to get top DEGs and add gene names
+get_top_DEGs <- function(highlighted_genes, id_to_name_mapping, num_top_genes) {
+  top_DEGs <- head(highlighted_genes[order(highlighted_genes$padj), ], num_top_genes)
+  top_DEGs$GeneName <- id_to_name_mapping[rownames(top_DEGs)]
+  return(top_DEGs)
+}
+
+# Set significance cutoffs
+pvalue_cutoff <- 0.05
+log2foldchange_cutoff <- 1
+
+# Process Blood samples
+highlighted_genes_Blood <- process_DE_genes(res_Blood, pvalue_cutoff, log2foldchange_cutoff, "INPUT/Blood_Highlighted_gene_ids.txt")
+id_to_name_mapping_Blood <- load_gene_mapping("Volcano_Genes_ids/Blood/gene_info_Blood.txt")
+top_50_DEGs_Blood <- get_top_DEGs(highlighted_genes_Blood, id_to_name_mapping_Blood, 50)
+res_Blood$GeneName <- id_to_name_mapping_Blood[rownames(res_Blood)]
+
+# Process Lung samples
+highlighted_genes_Lung <- process_DE_genes(res_Lung, pvalue_cutoff, log2foldchange_cutoff, "INPUT/Lung_Highlighted_gene_ids.txt")
+id_to_name_mapping_Lung <- load_gene_mapping("Volcano_Genes_ids/Lungs/gene_info_Lungs.txt")
+top_50_DEGs_Lung <- get_top_DEGs(highlighted_genes_Lung, id_to_name_mapping_Lung, 50)
+res_Lung$GeneName <- id_to_name_mapping_Lung[rownames(res_Lung)]
+
+```
+
+
+#Volcano plot for DEGs
+
+```{r Volcano_Plot differential gene expression}
+# Function to create volcano plots with gene names
+create_volcano_plot <- function(res, title, filename) {
+  # create custom key-value pairs for 'high', 'low', 'mid' expression by fold-change
+  keyvals <- ifelse(
+    res$log2FoldChange < -1, 'blue',
+    ifelse(res$log2FoldChange > 1, 'red', 'gray'))
+  keyvals[is.na(keyvals)] <- 'gray'
+  names(keyvals)[keyvals == 'red'] <- 'high'
+  names(keyvals)[keyvals == 'gray'] <- 'mid'
+  names(keyvals)[keyvals == 'blue'] <- 'low'
+  
+  # Create the volcano plot with gene names
+  volcano_plot <- EnhancedVolcano(
+    res,
+    lab = res$GeneName,  # Use the GeneName column as labels
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    title = title,
+    pCutoff = 0.05,
+    FCcutoff = 1,
+    pointSize = 3,
+    labSize = 5, 
+    colCustom = keyvals,
+    gridlines.major = TRUE,
+    gridlines.minor = FALSE,
+    border = 'full',
+    borderWidth = 1.0,
+    borderColour = 'black', 
+    legendPosition = 'right'
+  )
+  
+  ggsave(filename, plot = volcano_plot, device = "pdf")
+}
+
+# Create volcano plots for Blood and Lung
+create_volcano_plot(res_Blood, "Volcano Plot - RNA-Seq DE Analysis (Blood)", "OUTPUT/Figures/volcano_plot_Blood.pdf")
+create_volcano_plot(res_Lung, "Volcano Plot - RNA-Seq DE Analysis (Lung)", "OUTPUT/Figures/volcano_plot_Lung.pdf")
+
+```
+
+
+#Individual gene expression analysis
+
+```{r Plot_differential gene expression}
+# Find the common gene IDs
+# Load highlighted gene IDs from files
+highlighted_gene_ids_Lung <- read.table("INPUT/Lung_Highlighted_gene_ids.txt", header = FALSE)$V1
+highlighted_gene_ids_Blood <- read.table("INPUT/Blood_Highlighted_gene_ids.txt", header = FALSE)$V1
+normalized_counts <- counts(dds, normalized = TRUE)
+
+# Find the common gene IDs
+common_gene_ids <- intersect(highlighted_gene_ids_Lung, highlighted_gene_ids_Blood)
+
+common_gene_ids_names <- id_to_name_mapping_Blood[common_gene_ids]
+gene_1 <- na.omit(names(common_gene_ids_names)[common_gene_ids_names == "Ifit3"])[1]
+gene_2 <- na.omit(names(common_gene_ids_names)[common_gene_ids_names == "Oas2"])[1]
+gene_3 <- na.omit(names(common_gene_ids_names)[common_gene_ids_names == "Gbp2"])[1]
+gene_4 <- na.omit(names(common_gene_ids_names)[common_gene_ids_names == "Gbp5"])[1]
+
+# Save to a file (change the file path and name accordingly)
+write.table(common_gene_ids, file = "OUTPUT/Data/common_gene_ids.txt", quote = FALSE, col.names = FALSE, row.names = FALSE)
+
+# Create an empty list to store individual plots
+gene_plots <- list()
+
+# Loop through each gene
+for (gene_id in c(gene_1, gene_2, gene_3, gene_4)) {
+  # Get the gene name
+  gene_name <- common_gene_ids_names[gene_id]
+
+  # Investigate expression levels of the specific gene
+  gene_expression <- normalized_counts[gene_id, ]
+
+  # Details in the DataFrame
+  gene_expression_df <- designTable
+  gene_expression_df$Norm_gene_exp <- gene_expression[rownames(gene_expression_df)]
+
+  # Split the "Group" column by "-"
+  split_group <- strsplit(as.character(gene_expression_df$Group), "_")
+
+  # Create new columns based on the split
+  gene_expression_df$Module <- sapply(split_group, function(x) x[1])
+  gene_expression_df$Genotype <- sapply(split_group, function(x) x[2])
+  gene_expression_df$Condition <- sapply(split_group, function(x) x[3])
+
+  # Replace "Case" with "Infected" and "Control" with "Uninfected"
+  gene_expression_df$Condition <- gsub("Case", "Infected", gene_expression_df$Condition)
+  gene_expression_df$Condition <- gsub("Control", "Uninfected", gene_expression_df$Condition)
+  gene_expression_df$Condition <- factor(gene_expression_df$Condition, levels = c("Infected", "Uninfected"))
+
+  # Define custom colors for each group
+  custom_colors <- c("Lung_WT_Case" = "blue", "Lung_WT_Control" = "lightblue", "Blood_WT_Case" = "darkred", "Blood_WT_Control" = "lightcoral")
+
+  # Bar plot with scatter dots
+  plot_gene_expression <- ggplot(gene_expression_df, aes(x = Group, y = Norm_gene_exp, fill = Group)) +
+    geom_bar(stat = "summary", fun = "mean", position = "dodge", width = 0.5, color = "black") +
+    geom_point(position = position_jitter(width = 0.2), size = 2) +
+    labs(y = "Gene Expression") +
+    ggtitle(paste("Expression of", gene_name, "in Different Modules and Conditions")) +
+    theme_minimal() +
+    scale_x_discrete(labels = c("Lung_WT_Case" = "Infected", "Lung_WT_Control" = "Uninfected", "Blood_WT_Case" = "Infected", "Blood_WT_Control" = "Uninfected")) +
+    scale_fill_manual(values = custom_colors) +
+    facet_grid(~Module, space = "free_x", scales = "free_x", switch = "x") +
+    theme_classic() +
+    theme(strip.placement = "outside", strip.text.x = element_text(size = unit(8.0, "cm")),
+          axis.text = element_text(size = unit(8.0, "cm")), axis.ticks.x = element_blank(),
+          axis.title = element_text(size = unit(8.0, "cm"), face = "bold"), legend.position = "none") +theme(legend.position = "none", axis.title.x = element_blank()) +   theme(plot.title = element_text(size = unit(8.0, "cm"), hjust = 0.5))   # Adjust the size here
+
+
+  # Add the plot to the list
+  gene_plots[[gene_name]] <- plot_gene_expression
+}
+
+# Arrange the individual plots in a grid
+
+composite_plot <- gene_plots[[1]] + gene_plots[[2]] + gene_plots[[3]] + gene_plots[[4]] +
+                   plot_layout(ncol = 2)
+
+# Save the composite plot
+ggsave("OUTPUT/Figures/composite_plot.pdf", plot = composite_plot, device = "pdf")
+
+# Print the composite plot
+print(composite_plot)
+
+```
+
+#Overrepresentation analysis
+```{r Overrepresentation analysis}
+
+# Function to run Overrepresentation Analysis
+run_overrepresentation_analysis <- function(genes, universe_genes, ontology = "BP", org_db, pvalue_cutoff = 0.01, qvalue_cutoff = 0.05) {
+  enrich_result <- enrichGO(
+    gene = genes,
+    universe = universe_genes,
+    OrgDb = org_db,
+    ont = ontology,
+    keyType = "ENSEMBL",
+    pAdjustMethod = "BH",
+    pvalueCutoff = pvalue_cutoff,
+    qvalueCutoff = qvalue_cutoff
+  )
+  
+  register(MulticoreParam())
+  simp_enrich_result <- clusterProfiler::simplify(
+    enrich_result,
+    cutoff = 0.7,
+    by = "p.adjust",
+    select_fun = min,
+    measure = "Wang",
+    semData = NULL
+  )
+
+  #return(enrich_result)
+  return(simp_enrich_result)
+}
+
+# Function to visualize results and save to PDF
+visualize_results <- function(enrich_result, id_to_name_mapping, filename, show_category = 10) {
+  bar_plot <- barplot(enrich_result, showCategory = show_category, main = "Rank 10 GO Terms")
+
+  ggsave(paste0("OUTPUT/Figures/",filename, "_barplot.pdf"), plot = bar_plot, device = "pdf")
+  
+  enrich_pre_plot <- setReadable(enrich_result, 'org.Mm.eg.db', 'ENSEMBL')
+  cnet_plot <- cnetplot(
+    enrich_pre_plot,
+    node_label = "gene",
+    showCategory = show_category,
+    cex_label_gene = 0.8,
+    color_category = 'firebrick',
+    color_gene = 'steelblue',
+    categorySize = "geneNum"
+  )
+  ggsave(paste0("OUTPUT/Figures/",filename, "_cnetplot.pdf"), plot = cnet_plot, device = "pdf", width = 8, height = 8)
+  
+  top_terms <- head(enrich_result, n = 10)
+  top_terms$NameGene <- str_replace_all(top_terms$geneID, id_to_name_mapping)
+  print(top_terms)
+}
+
+# Load DE Genes and Universe Genes
+Blood_DE_genes <- rownames(Blood_DEG_padj)
+Lung_DE_genes <- rownames(Lung_DEG_padj)  # Replace with actual DE genes
+universe_genes <- rownames(count_matrix)  # Replace with actual universe genes
+
+# Run Overrepresentation Analysis for Blood
+enrich_result_Blood <- run_overrepresentation_analysis(
+  genes = Blood_DE_genes,
+  universe_genes = universe_genes,
+  ontology = "BP",
+  org_db = org.Mm.eg.db
+)
+
+
+# Visualize Results for Blood
+visualize_results(enrich_result_Blood, id_to_name_mapping_Blood, "Blood")
+
+# Run Overrepresentation Analysis for Lung
+enrich_result_Lung <- run_overrepresentation_analysis(
+  genes = Lung_DE_genes,
+  universe_genes = universe_genes,
+  ontology = "BP",
+  org_db = org.Mm.eg.db
+)
+
+# Visualize Results for Lung
+visualize_results(enrich_result_Lung, id_to_name_mapping_Lung, "Lung")
+
+```
