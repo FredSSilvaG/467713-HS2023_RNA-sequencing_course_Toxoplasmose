@@ -1,2 +1,0 @@
-Mus_musculus.GRCm39.110.gtf
-Mus_musculus.GRCm39.dna_sm.primary_assembly.fa
