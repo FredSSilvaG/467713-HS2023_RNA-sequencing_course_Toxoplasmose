@@ -32,19 +32,19 @@ MEMORY=$SLURM_MEM
 
 # Set the index basename
 INDEX_BASENAME=mus_genome_index
-#INDEX_BASENAME=/data/users/fsilvagutierrez/RNA_seq_Toxop_project/scripts/Mus_Index
+#INDEX_BASENAME=/data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/scripts/Mus_Index
 
 # Define the folder where your sample files are located
-SAMPLE_FOLDER=/data/users/fsilvagutierrez/RNA_seq_Toxop_project/reads/reads 
+SAMPLE_FOLDER=/data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/reads 
 
 # Define the folder for output
-OUTPUT_FOLDER=/data/users/fsilvagutierrez/RNA_seq_Toxop_project/03_mapping 
+OUTPUT_FOLDER=/data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/03_mapping 
 
 # List all files in the sample folder
 SAMPLE_FILES=($SAMPLE_FOLDER/*_1.fastq.gz)
 
 # Define the reference sequence
-REFERENCE_SEQUENCE_FASTA=/data/users/fsilvagutierrez/RNA_seq_Toxop_project/Reference/*.fa
+REFERENCE_SEQUENCE_FASTA=/data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/Reference/*.fa
 
 
 ## Execution of the code

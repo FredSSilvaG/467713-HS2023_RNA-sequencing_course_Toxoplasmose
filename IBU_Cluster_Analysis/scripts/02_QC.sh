@@ -18,10 +18,10 @@ module add UHTS/Quality_control/fastqc/0.11.7
 
 
 #quality control
-fastqc -t 4  -q /data/users/fsilvagutierrez/RNA_seq_Toxop_project/reads/reads/* -o /data/users/fsilvagutierrez/RNA_seq_Toxop_project/02_QC
+fastqc -t 4  -q /data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/00_Input/reads/* -o /data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/02_QC
 
 #remove no longer needed files
-rm /data/users/fsilvagutierrez/RNA_seq_Toxop_project/02_QC/*.zip
+rm /data/users/fsilvagutierrez/Cluster_1/IBU_Cluster_Analysis/02_QC/*.zip
 
 #running time notification
 echo 'A - Quality Control done'
